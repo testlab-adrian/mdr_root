@@ -1,0 +1,66 @@
+id: bde132ed-0f25-49b7-a5d5-35790f000998
+name: Break Glass Account has account changes
+type: Microsoft.OperationalInsights/workspaces/providers/alertRules
+kind: Scheduled
+apiVersion: 2021-10-01-preview
+properties:
+  displayName: Break Glass Account has account changes
+  description: >-
+      Break Glass Account," has undergone modifications. 
+      A Break Glass Account typically has elevated privileges and is intended for emergency situations or when standard access mechanisms are unavailable.
+      https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/security-emergency-access
+
+      This rule needs a watchlist named "BreakGlassAccounts" to be created in the Sentinel portal, where the watchlist item(searchKey) and userPrincipalName in auditlogs must match exactly.
+  severity: High
+  enabled: true
+  query: >
+    AuditLogs     
+    | mv-expand Target = TargetResources 
+    | extend targetid = tostring(Target.userPrincipalName), InitiatedParsed = parse_json(InitiatedBy)
+    | lookup kind=inner _GetWatchlist('BreakGlassAccounts') on $left.targetid == $right.SearchKey 
+    | project
+      OperationName,
+      Target.userPrincipalName,
+      targetid,
+      Initiator = coalesce(tostring(InitiatedParsed.app.displayName), tostring(InitiatedParsed.app.userPrincipalName), tostring(InitiatedParsed.user.userPrincipalName)), 
+      TimeGenerated
+  queryFrequency: PT10M
+  queryPeriod: PT10M
+  triggerOperator: GreaterThan
+  triggerThreshold: 0
+  suppressionDuration: PT5H
+  suppressionEnabled: false
+  tactics:
+    - Persistence
+  techniques:
+    - T1078
+  alertRuleTemplateName: null
+  incidentConfiguration:
+    createIncident: true
+    groupingConfiguration:
+      enabled: false
+      reopenClosedIncident: false
+      lookbackDuration: PT5H
+      matchingMethod: AllEntities
+      groupByEntities: []
+      groupByAlertDetails: []
+      groupByCustomDetails: []
+  eventGroupingSettings:
+    aggregationKind: SingleAlert
+  alertDetailsOverride:
+    alertDisplayNameFormat: null
+    alertDescriptionFormat: null
+    alertTacticsColumnName: null
+    alertSeverityColumnName: null
+  customDetails: null
+  entityMappings:
+    # - entityType: Account
+    #   fieldMappings:
+    #     - identifier: FullName
+    #       columnName: Target.userPrincipalName
+    # - entityType: Account
+    #   fieldMappings:
+    #     - identifier: FullName
+    #       columnName: InitiatedBy.user.userPrincipalName
+  sentinelEntitiesMappings: null
+  templateVersion: null
