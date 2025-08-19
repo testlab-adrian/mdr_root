@@ -1,4 +1,24 @@
+# Consulent work
+## High overview
+- Run deployment Powershell script to deploy with customer:
+Enter the step to start with:
+  - Add and register resource providers
+  - Create Monitor and Automation Resource Groups
+  - Deploy Lighthouse Template
+  - Create Entra ID Groups and Assign Azure RBAC Roles
+  - Invite External Users and Add Them to Groups
+  - Configure Defender XDR and Custom Role Assignments
+  - Provision Teams (Team and Channels)
+  - Deploy Sentinel
+  - Set Resource Locks and Final Cleanup
+  - Create Entra Groups for the customer
+- Start delivering content on CI/CD:
+  - Runs on a per needed basis.
 
+## Deploy rules and rule updates workflow
+- Create a new repository based on cust_template
+- Add the needed parameters into deployment_config.yml
+- Run the CI/CD for the deploy content (rules, playbooks, workbooks etc)
 
 # Very High level overview for deployment
 During customer meeting:
