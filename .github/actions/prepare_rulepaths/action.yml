@@ -10,15 +10,15 @@ author: Adrian Kydland Skaftun and Jørgen Torset Nilsen
 description: This action prepares the rule paths for deployment and returns a CSV containing the paths and IDs of the rules.
 
 # Added inputs to make the action reusable across repositories and checkouts.
-# Previously, paths were hard-coded to mdr_root and mdr_cust under github.workspace.
+# Previously, paths were hard-coded to mdr_root and mdr_cust under the workflow workspace.
 # Now, callers can control where those repos are checked out and where to write the CSV.
 inputs:
   ROOT_DIR:
-    description: 'Relative folder path (under ${{ github.workspace }}) for the mdr_root checkout.'
+    description: 'Relative folder path (under the workflow workspace) for the mdr_root checkout.'
     required: false
     default: 'mdr_root'
   CUST_DIR:
-    description: 'Relative folder path (under ${{ github.workspace }}) for the customer repo checkout.'
+    description: 'Relative folder path (under the workflow workspace) for the customer repo checkout.'
     required: false
     default: 'mdr_cust'
   CONFIG_FILE:
@@ -26,7 +26,7 @@ inputs:
     required: false
     default: 'deployment-config.yaml'
   OUTPUT_CSV:
-    description: 'Relative path (under ${{ github.workspace }}) to the CSV file to create/update.'
+    description: 'Relative path (under the workflow workspace) to the CSV file to create/update.'
     required: false
     default: 'content.csv'
 
@@ -62,22 +62,25 @@ runs:
     - name: Add base content to artifacts (mdr_root)
       shell: pwsh
       run: |
-        # Build absolute CSV path under the workflow workspace
-        $csvPath = "${{ github.workspace }}/${{ inputs.OUTPUT_CSV }}"
+        # Build absolute CSV path under the workflow workspace using the runner's environment variable
+        $csvPath = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.OUTPUT_CSV }}"
 
         # Initialize the CSV with a header if it does not exist yet
         if (-not (Test-Path $csvPath)) {
           "Path,ID" | Out-File -FilePath $csvPath
         }
 
+        # Determine the absolute base path for the ROOT_DIR checkout and a normalized variant
+        $rootDirAbs = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.ROOT_DIR }}"
+        $rootDirNorm = $rootDirAbs -replace '\\','/'
+
         # Find all YAML files in the central root repository checkout and add them to the CSV
-        Get-ChildItem "${{ github.workspace }}/${{ inputs.ROOT_DIR }}" -Recurse -Filter *.yaml | ForEach-Object {
+        Get-ChildItem $rootDirAbs -Recurse -Filter *.yaml | ForEach-Object {
           Write-Host "Found artifacts file: $($_.FullName)"
 
           # Convert absolute path to a relative path rooted at ROOT_DIR and normalize to forward slashes
-          $path = $_.FullName
-          $path = $path -replace [regex]::Escape("${{ github.workspace }}/${{ inputs.ROOT_DIR }}/"), ""
-          $path = $path -replace '\\', '/'
+          $path = $_.FullName -replace '\\','/'
+          $path = $path -replace [regex]::Escape("$rootDirNorm/"), ""
 
           # Read YAML and extract the 'id' field. If parsing fails, still record the path with an empty ID
           try {
@@ -100,7 +103,8 @@ runs:
     - name: Add, exclude and override content (mdr_cust)
       shell: pwsh
       run: |
-        $csvPath = "${{ github.workspace }}/${{ inputs.OUTPUT_CSV }}"
+        # CSV path produced/seeded in Phase 1
+        $csvPath = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.OUTPUT_CSV }}"
 
         # Ensure CSV exists with header (in case Phase 1 was skipped)
         if (-not (Test-Path $csvPath)) {
@@ -118,15 +122,18 @@ runs:
           }
         }
 
+        # Determine the absolute base path for the CUST_DIR checkout and normalized variant
+        $custDirAbs = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.CUST_DIR }}"
+        $custArtifactsPath = Join-Path $custDirAbs 'artifacts'
+        $custDirNorm = $custDirAbs -replace '\\','/'
+
         # Ingest all customer YAML files and overlay by ID
-        $customerArtifactsPath = "${{ github.workspace }}/${{ inputs.CUST_DIR }}/artifacts"
-        if (Test-Path $customerArtifactsPath) {
-          $files = Get-ChildItem $customerArtifactsPath -Recurse -Include *.yaml,*.yml
+        if (Test-Path $custArtifactsPath) {
+          $files = Get-ChildItem $custArtifactsPath -Recurse -Include *.yaml,*.yml
 
           foreach ($file in $files) {
             # Build relative path rooted at CUST_DIR and normalize slashes
-            $relativePath = $file.FullName -replace [regex]::Escape("${{ github.workspace }}/${{ inputs.CUST_DIR }}/"), ""
-            $relativePath = $relativePath -replace '\\', '/'
+            $relativePath = ($file.FullName -replace '\\','/') -replace [regex]::Escape("$custDirNorm/"), ""
             Write-Host "Processing file: $($file.FullName) with relative path: $relativePath"
 
             # Extract rule id from YAML
@@ -151,7 +158,7 @@ runs:
           }
         }
         else {
-          Write-Host "Customer artifacts path not found: $customerArtifactsPath"
+          Write-Host "Customer artifacts path not found: $custArtifactsPath"
         }
 
         # Rebuild CSV lines from the dictionary
@@ -161,7 +168,7 @@ runs:
         }
 
         # Apply ExcludeRules from customer deployment config
-        $configPath = Join-Path "${{ github.workspace }}/${{ inputs.CUST_DIR }}" "${{ inputs.CONFIG_FILE }}"
+        $configPath = Join-Path $custDirAbs "${{ inputs.CONFIG_FILE }}"
         if (Test-Path $configPath) {
           try {
             $configContent = Get-Content -Raw -Path $configPath
