@@ -1,11 +1,12 @@
 ---
 name: Create release
 
-on:
-  push:
-    tags:
-      - "v*"
-
+on: # yamllint disable-line rule:truthy
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Enter the release tag (e.g., v1.0.0)'
+        required: true
 permissions:
   contents: write
 
