@@ -1,0 +1,13 @@
+name: Print Text on Push
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  print_text:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print text
+        run: echo "Hello, this is a message printed on push to master!"
