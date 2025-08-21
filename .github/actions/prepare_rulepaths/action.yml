@@ -1,0 +1,192 @@
+# This composite action prepares a CSV (content.csv by default) that maps each rule file's
+# relative path to its rule ID. It does so in two phases:
+#  1) Seed the CSV with all base rules from the central mdr_root repository
+#  2) Overlay customer-specific content from the mdr_cust repository (add/override) and
+#     then apply ExcludeRules from the customer's deployment-config.yaml
+#
+# The goal is to centralize this logic so multiple customer repos can reuse it.
+name: Prepare Rule Paths
+author: Adrian Kydland Skaftun and Jørgen Torset Nilsen
+description: This action prepares the rule paths for deployment and returns a CSV containing the paths and IDs of the rules.
+
+# Added inputs to make the action reusable across repositories and checkouts.
+# Previously, paths were hard-coded to mdr_root and mdr_cust under github.workspace.
+# Now, callers can control where those repos are checked out and where to write the CSV.
+inputs:
+  ROOT_DIR:
+    description: 'Relative folder path (under ${{ github.workspace }}) for the mdr_root checkout.'
+    required: false
+    default: 'mdr_root'
+  CUST_DIR:
+    description: 'Relative folder path (under ${{ github.workspace }}) for the customer repo checkout.'
+    required: false
+    default: 'mdr_cust'
+  CONFIG_FILE:
+    description: 'Deployment config file path relative to CUST_DIR. Used for ExcludeRules and Connectors.'
+    required: false
+    default: 'deployment-config.yaml'
+  OUTPUT_CSV:
+    description: 'Relative path (under ${{ github.workspace }}) to the CSV file to create/update.'
+    required: false
+    default: 'content.csv'
+
+runs:
+  using: 'composite'
+  steps:
+    # Ensure required PowerShell modules are available. This was already done before;
+    # retained here because this action is self-contained and may be used standalone.
+    - name: Install PowerShell Modules
+      id: install-modules
+      shell: pwsh
+      run: |
+        # Display informational messages in the action logs
+        $InformationPreference = 'Continue'
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+        try {
+          $modulesToInstall = @(
+            'powershell-yaml'
+          )
+          $modulesToInstall | ForEach-Object {
+            if (-not (Get-Module -Name $_ -ListAvailable)) {
+              Write-Information -MessageData "Module [$_] not found, installing it..."
+              Install-Module -Name $_ -ErrorAction Stop
+            }
+          }
+        } catch {
+          Write-Error -Message "Failed to install module [$_]."
+          exit 1
+        }
+
+    # Phase 1: Seed with base rules from the central library (mdr_root by default)
+    # We iterate all YAML files and extract the id property when present.
+    - name: Add base content to artifacts (mdr_root)
+      shell: pwsh
+      run: |
+        # Build absolute CSV path under the workflow workspace
+        $csvPath = "${{ github.workspace }}/${{ inputs.OUTPUT_CSV }}"
+
+        # Initialize the CSV with a header if it does not exist yet
+        if (-not (Test-Path $csvPath)) {
+          "Path,ID" | Out-File -FilePath $csvPath
+        }
+
+        # Find all YAML files in the central root repository checkout and add them to the CSV
+        Get-ChildItem "${{ github.workspace }}/${{ inputs.ROOT_DIR }}" -Recurse -Filter *.yaml | ForEach-Object {
+          Write-Host "Found artifacts file: $($_.FullName)"
+
+          # Convert absolute path to a relative path rooted at ROOT_DIR and normalize to forward slashes
+          $path = $_.FullName
+          $path = $path -replace [regex]::Escape("${{ github.workspace }}/${{ inputs.ROOT_DIR }}/"), ""
+          $path = $path -replace '\\', '/'
+
+          # Read YAML and extract the 'id' field. If parsing fails, still record the path with an empty ID
+          try {
+            $yamlContent = Get-Content -Raw -Path $_.FullName
+            $yamlObject = ConvertFrom-Yaml $yamlContent
+            $id = $yamlObject.id
+          }
+          catch {
+            Write-Host "Failed to parse YAML from $($_.FullName)"
+            $id = ""
+          }
+
+          Write-Host "Saving path: $path with ID: $id"
+          "$path,$id" | Out-File -Append -FilePath $csvPath
+        }
+
+    # Phase 2: Overlay customer customizations and apply exclusions based on customer config
+    #  - For every YAML file in CUST_DIR/artifacts: add or override entries by ID
+    #  - Read ExcludeRules from the deployment-config.yaml (path configurable) and remove those IDs
+    - name: Add, exclude and override content (mdr_cust)
+      shell: pwsh
+      run: |
+        $csvPath = "${{ github.workspace }}/${{ inputs.OUTPUT_CSV }}"
+
+        # Ensure CSV exists with header (in case Phase 1 was skipped)
+        if (-not (Test-Path $csvPath)) {
+          "Path,ID" | Out-File -FilePath $csvPath
+        }
+
+        # Build an in-memory dictionary keyed by rule ID with the relative path as value
+        $csvContent = @{}
+        if (Test-Path $csvPath) {
+          $lines = Get-Content -Path $csvPath | Select-Object -Skip 1
+          foreach ($line in $lines) {
+            if ($line -match "^(.*?),(.*)$") {
+              $csvContent[$matches[2]] = $matches[1]
+            }
+          }
+        }
+
+        # Ingest all customer YAML files and overlay by ID
+        $customerArtifactsPath = "${{ github.workspace }}/${{ inputs.CUST_DIR }}/artifacts"
+        if (Test-Path $customerArtifactsPath) {
+          $files = Get-ChildItem $customerArtifactsPath -Recurse -Include *.yaml,*.yml
+
+          foreach ($file in $files) {
+            # Build relative path rooted at CUST_DIR and normalize slashes
+            $relativePath = $file.FullName -replace [regex]::Escape("${{ github.workspace }}/${{ inputs.CUST_DIR }}/"), ""
+            $relativePath = $relativePath -replace '\\', '/'
+            Write-Host "Processing file: $($file.FullName) with relative path: $relativePath"
+
+            # Extract rule id from YAML
+            try {
+              $yamlContent = Get-Content -Raw -Path $file.FullName
+              $yamlObj = $yamlContent | ConvertFrom-Yaml
+              $id = $yamlObj.id
+            }
+            catch {
+              Write-Host "Failed to parse YAML from $($file.FullName)"
+              $id = ""
+            }
+
+            # Only include files with a non-empty id
+            if ($id -and $id.Trim() -ne "") {
+              # If the id already exists it will be overridden with the customer path (intended behavior)
+              $csvContent[$id] = $relativePath
+            }
+            else {
+              Write-Host "Skipping file $($file.FullName) due to invalid or empty id"
+            }
+          }
+        }
+        else {
+          Write-Host "Customer artifacts path not found: $customerArtifactsPath"
+        }
+
+        # Rebuild CSV lines from the dictionary
+        $csvLines = @("Path,ID")
+        foreach ($key in $csvContent.Keys) {
+          $csvLines += "$( $csvContent[$key] ),$key"
+        }
+
+        # Apply ExcludeRules from customer deployment config
+        $configPath = Join-Path "${{ github.workspace }}/${{ inputs.CUST_DIR }}" "${{ inputs.CONFIG_FILE }}"
+        if (Test-Path $configPath) {
+          try {
+            $configContent = Get-Content -Raw -Path $configPath
+            $config = $configContent | ConvertFrom-Yaml
+            if ($config.ExcludeRules) {
+              foreach ($rule in $config.ExcludeRules) {
+                if ($rule.id -and $csvContent.ContainsKey($rule.id)) {
+                  $csvContent.Remove($rule.id)
+                }
+              }
+              # Rebuild CSV after applying exclusions
+              $csvLines = @("Path,ID")
+              foreach ($key in $csvContent.Keys) {
+                $csvLines += "$( $csvContent[$key] ),$key"
+              }
+            }
+          }
+          catch {
+            Write-Host "Failed to parse deployment-config.yaml at: $configPath"
+          }
+        }
+        else {
+          Write-Host "No deployment-config.yaml found at: $configPath (skipping exclusions)"
+        }
+
+        # Persist the final CSV to disk (UTF-8)
+        $csvLines | Out-File -FilePath $csvPath -Encoding utf8
+
