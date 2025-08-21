@@ -7,14 +7,10 @@ inputs:
     required: true
     default: 'Hello, World!'
 
-on:
-  push:
-    branches:
-      - master
-
-jobs:
-  print_text:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Print text
-        run: echo "Hello, this is a message printed on push to master!"
+runs:
+  using: composite
+  steps:
+    - name: Check if branch is master
+      id: print_text
+      shell: bash
+      run: echo "${{ inputs.message }}"
