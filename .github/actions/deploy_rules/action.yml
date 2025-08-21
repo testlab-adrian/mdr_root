@@ -1,4 +1,11 @@
 name: Print Text on Push
+author: Your Name
+description: This action prints a message when there is a push to the master branch.
+inputs:
+  message:
+    description: 'The message to print'
+    required: true
+    default: 'Hello, World!'
 
 on:
   push:
