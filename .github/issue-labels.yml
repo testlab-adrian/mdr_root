@@ -1,0 +1,4 @@
+---
+- name: MDR
+  description: Managed Detection and Response
+  color: 24D3F2
