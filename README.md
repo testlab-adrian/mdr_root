@@ -1,3 +1,15 @@
+# Introduction
+This repository serves as the foundation/the glue for out deployments. It is supposed to be the central repository for managing content delivery, scripts and more for our customers. It contains the centralized content that will be deployed to all customers, and it has logic that will enhance each step of the process of deployment. This repository is cloned into each deployment workflow from the customer specific template based repository and the code is being run in the customer context. 
+
+# Prerequisites (Most of which could be handled by `mdr_)
+- Azure Sentinel in a workspace
+- Resource groups: 
+  - Monitoring group
+  - Automation group
+- 
+
+# Naming conventions
+
 # Consulent work
 ## High overview
 - Run deployment Powershell script to deploy with customer:
